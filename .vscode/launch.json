@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: train.py (entorno del proyecto)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            "python": "C:\\misDocu\\Python\\env\\Scripts\\python.exe",
+            "args": [
+                "--manifest",
+                "${input:manifestCsv}"
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "manifestCsv",
+            "type": "promptString",
+            "description": "Ruta del CSV de muestras",
+            "default": ""
+        }
+    ]
+}
