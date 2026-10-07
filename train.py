@@ -23,7 +23,6 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 
 from backbones import build_backbone
 from dataset import GingivalSTLDataset
-from project_logger import Logger
 
 BACKBONES = ["resnet50", "efficientnet_b3", "densenet121", "convnext_tiny"]
 
@@ -68,10 +67,21 @@ def train_one_fold(backbone_name: str, train_samples, val_samples,
         {"params": backbone_params, "lr": lr_backbone},
         {"params": head_params, "lr": lr_head},
     ])
-    criterion = nn.CrossEntropyLoss()
 
+    # Pesos de clase inversamente proporcionales a su frecuencia en ESTE fold
+    # de entrenamiento: sin esto, con un desbalance ~65/35 el optimizador
+    # encuentra un mínimo "barato" prediciendo siempre la clase mayoritaria,
+    # que es exactamente el colapso que estamos observando.
+    train_labels = np.array([label for _, label in train_samples])
+    class_counts = np.bincount(train_labels, minlength=2).astype(np.float32)
+    class_weights = class_counts.sum() / (2 * np.clip(class_counts, 1, None))
+    class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+    epoch_losses = []
     for epoch in range(epochs):
         model.train()
+        running_loss = 0.0
         for images, labels in train_loader:
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -79,6 +89,8 @@ def train_one_fold(backbone_name: str, train_samples, val_samples,
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
+            running_loss += loss.item() * images.size(0)
+        epoch_losses.append(running_loss / len(train_ds))
 
     # Validación del fold
     model.eval()
@@ -103,6 +115,8 @@ def train_one_fold(backbone_name: str, train_samples, val_samples,
         "baseline_acc": baseline_acc,
         "confusion_matrix": confusion_matrix(all_labels, all_preds, labels=[0, 1]),
         "pred_distribution": np.bincount(all_preds, minlength=2),
+        "loss_start": epoch_losses[0],
+        "loss_end": epoch_losses[-1],
     }
 
 
@@ -131,23 +145,16 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
             print(f"  Fold {fold_idx+1}/{k} -> "
                   f"accuracy={metrics['accuracy']:.3f}  f1={metrics['f1']:.3f}  "
                   f"(baseline mayoritario={metrics['baseline_acc']:.3f}, "
-                  f"preds={metrics['pred_distribution'].tolist()}){degenerate}")
-            Logger.traza("info", f"Backbone {backbone_name} Fold {fold_idx+1}/{k}: "
-                                f"accuracy={metrics['accuracy']:.3f}  f1={metrics['f1']:.3f}  "
-                                f"(baseline mayoritario={metrics['baseline_acc']:.3f}, "
-                                f"preds={metrics['pred_distribution'].tolist()})")
+                  f"preds={metrics['pred_distribution'].tolist()}, "
+                  f"loss {metrics['loss_start']:.3f}->{metrics['loss_end']:.3f}){degenerate}")
 
     print("\n=== Resumen comparativo (media ± desviación típica) ===")
-    Logger.traza("info", "Resumen comparativo (media ± desviación típica)")     
     print(f"{'Backbone':18s} {'Accuracy':>18s} {'F1':>18s}")
-    Logger.traza("info", f"{'Backbone':18s} {'Accuracy':>18s} {'F1':>18s}")
     for name in BACKBONES:
         accs = [m["accuracy"] for m in results[name]]
         f1s = [m["f1"] for m in results[name]]
         print(f"{name:18s} {np.mean(accs):.3f} ± {np.std(accs):.3f}    "
               f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f}")
-        Logger.traza("info", f"{name:18s} {np.mean(accs):.3f} ± {np.std(accs):.3f}    "
-                            f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f}")
 
     return results
 
@@ -163,7 +170,6 @@ if __name__ == "__main__":
                          help="Solo para pruebas offline sin descarga de pesos ImageNet")
     args = parser.parse_args()
 
-    Logger.traza("info", f"Inicio de entrenamiento y comparación de backbones con K-Fold estratificado (k={args.k}, epochs={args.epochs})")
     run_comparison(
         manifest_csv=args.manifest,
         cache_dir=args.cache_dir,
