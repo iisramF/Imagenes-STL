@@ -53,7 +53,7 @@ def compute_feature(ds: GingivalSTLDataset, stl_path: str, mode: str) -> float:
 
 
 def generate_manifest(input_manifest: str, output_manifest: str, mode: str = "height_range"):
-    with open(input_manifest, newline="") as f:
+    with open(input_manifest, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         stl_paths = [row["stl_path"] for row in reader]
 
@@ -68,7 +68,7 @@ def generate_manifest(input_manifest: str, output_manifest: str, mode: str = "he
         label = 1 if feat > threshold else 0
         rows.append((path, label, feat))
 
-    with open(output_manifest, "w", newline="") as f:
+    with open(output_manifest, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow(["stl_path", "label"])
         for path, label, _ in rows:
