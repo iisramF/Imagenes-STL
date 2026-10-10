@@ -12,7 +12,7 @@ demostrado que el pipeline y los backbones SÍ son capaces de aprender
 cuando existe una relación real que aprender -- y el problema de fondo en
 tus resultados anteriores es el etiquetado, no el código ni la arquitectura.
 
-Dos variantes de dificultad:
+Variantes disponibles:
   - "height_range": rango de altura (Z) de la malla normalizada. Es la
     variante MÁS FÁCIL, porque el depth_map prácticamente "copia" esta
     información directamente -> sirve para confirmar que no hay fugas/bugs
@@ -21,7 +21,14 @@ Dos variantes de dificultad:
     sobre la malla). Requiere integrar información espacial, no es una
     copia directa de un canal -> control algo más exigente.
 
-En ambos casos, el umbral es la MEDIANA de la muestra, así la etiqueta
+  - "curvature_mean": media de |curvatura| por vértice. Es la versión
+    intrínseca de la anterior: no depende del número de vértices.
+    ATENCIÓN: "curvature_energy" (suma) crece con la densidad de la malla
+    (misma superficie con 9x más vértices -> ~9x más "energía"), así que
+    clasifica por densidad de malla, información que el pipeline 2.5D
+    elimina al remuestrear y normalizar. Se mantiene solo como referencia.
+
+En todos los casos, el umbral es la MEDIANA de la muestra, así la etiqueta
 queda balanceada 50/50 por construcción (elimina el factor de desbalance
 de clases de la ecuación).
 """
@@ -29,6 +36,7 @@ de clases de la ecuación).
 import argparse
 import csv
 import numpy as np
+import trimesh
 
 from dataset import GingivalSTLDataset
 
@@ -40,16 +48,21 @@ def compute_feature(ds: GingivalSTLDataset, stl_path: str, mode: str) -> float:
         z = mesh.vertices[:, 2]
         return float(z.max() - z.min())
 
-    elif mode == "curvature_energy":
-        curvature = mesh.vertices  # placeholder shape check
-        import trimesh
-        curv = trimesh.curvature.discrete_mean_curvature_measure(
-            mesh, mesh.vertices, radius=ds.curvature_radius
-        )
+    # Curvatura media discreta por vértice (esfera de radio ds.curvature_radius)
+    curv = trimesh.curvature.discrete_mean_curvature_measure(
+        mesh, mesh.vertices, radius=ds.curvature_radius
+    )
+
+    if mode == "curvature_energy":
+        # OJO: suma sobre vértices -> crece con la densidad de la malla
         return float(np.sum(np.abs(curv)))
 
-    else:
-        raise ValueError(f"Modo no reconocido: {mode}")
+    if mode == "curvature_mean":
+        # Media por vértice -> magnitud intrínseca de la forma, estable
+        # frente a la densidad de malla
+        return float(np.mean(np.abs(curv)))
+
+    raise ValueError(f"Modo no reconocido: {mode}")
 
 
 def generate_manifest(input_manifest: str, output_manifest: str, mode: str = "height_range"):
@@ -85,7 +98,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_manifest", required=True,
                          help="CSV original con columna stl_path (la columna label se ignora)")
     parser.add_argument("--output_manifest", default="manifest_positive_control.csv")
-    parser.add_argument("--mode", choices=["height_range", "curvature_energy"],
+    parser.add_argument("--mode", choices=["height_range", "curvature_energy", "curvature_mean"],
                          default="height_range")
     args = parser.parse_args()
 

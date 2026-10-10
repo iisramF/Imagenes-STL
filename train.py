@@ -14,6 +14,7 @@ apartado 2.2 (arquitectura y transfer learning) del trabajo.
 
 import argparse
 import csv
+from project_logger import Logger
 import numpy as np
 import torch
 import torch.nn as nn
@@ -132,6 +133,7 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
 
     for backbone_name in BACKBONES:
         print(f"\n=== Backbone: {backbone_name} ===")
+        Logger.traza("info", f"\n=== Backbone: {backbone_name} ===")
         for fold_idx, (train_idx, val_idx) in enumerate(skf.split(samples, labels)):
             train_samples = [samples[i] for i in train_idx]
             val_samples = [samples[i] for i in val_idx]
@@ -146,15 +148,25 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
                   f"accuracy={metrics['accuracy']:.3f}  f1={metrics['f1']:.3f}  "
                   f"(baseline mayoritario={metrics['baseline_acc']:.3f}, "
                   f"preds={metrics['pred_distribution'].tolist()}, "
-                  f"loss {metrics['loss_start']:.3f}->{metrics['loss_end']:.3f}){degenerate}")
+                  f"loss {metrics['loss_start']:.3f}->{metrics['loss_end']:.3f}){degenerate}")  
+            Logger.traza("info", f"  Fold {fold_idx+1}/{k} -> "
+                         f"accuracy={metrics['accuracy']:.3f}  f1={metrics['f1']:.3f}  "
+                         f"(baseline mayoritario={metrics['baseline_acc']:.3f}, "
+                         f"preds={metrics['pred_distribution'].tolist()}, "
+                         f"loss {metrics['loss_start']:.3f}->{metrics['loss_end']:.3f}){degenerate}")  
 
+    
     print("\n=== Resumen comparativo (media ± desviación típica) ===")
+    Logger.traza("info", "\n=== Resumen comparativo (media ± desviación típica) ===")
     print(f"{'Backbone':18s} {'Accuracy':>18s} {'F1':>18s}")
+    Logger.traza("info", f"{'Backbone':18s} {'Accuracy':>18s} {'F1':>18s}")
     for name in BACKBONES:
         accs = [m["accuracy"] for m in results[name]]
         f1s = [m["f1"] for m in results[name]]
         print(f"{name:18s} {np.mean(accs):.3f} ± {np.std(accs):.3f}    "
               f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f}")
+        Logger.traza("info", f"{name:18s} {np.mean(accs):.3f} ± {np.std(accs):.3f}    "
+                     f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f}")
 
     return results
 
@@ -169,6 +181,9 @@ if __name__ == "__main__":
     parser.add_argument("--no_pretrained", action="store_true",
                          help="Solo para pruebas offline sin descarga de pesos ImageNet")
     args = parser.parse_args()
+
+    Logger.traza("info", f"Ejecutando comparación de backbones con manifest={args.manifest}, "
+                       f"cache_dir={args.cache_dir}, k={args.k}, epochs={args.epochs}, no_pretrained={args.no_pretrained}") 
 
     run_comparison(
         manifest_csv=args.manifest,
