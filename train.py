@@ -14,7 +14,6 @@ apartado 2.2 (arquitectura y transfer learning) del trabajo.
 
 import argparse
 import csv
-from project_logger import Logger
 import numpy as np
 import torch
 import torch.nn as nn
@@ -24,6 +23,7 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 
 from backbones import build_backbone
 from dataset import GingivalSTLDataset
+from project_logger import Logger
 
 BACKBONES = ["resnet50", "efficientnet_b3", "densenet121", "convnext_tiny"]
 
@@ -44,9 +44,15 @@ def read_manifest(csv_path: str):
 
 def train_one_fold(backbone_name: str, train_samples, val_samples,
                     cache_dir: str, epochs: int, lr_head: float, lr_backbone: float,
-                    device: str, pretrained: bool = True) -> dict:
-    train_ds = GingivalSTLDataset(train_samples, cache_dir=cache_dir, augment=True)
-    val_ds = GingivalSTLDataset(val_samples, cache_dir=cache_dir, augment=False)
+                    device: str, pretrained: bool = True,
+                    norm_mode: str = "per_image") -> dict:
+    train_ds = GingivalSTLDataset(train_samples, cache_dir=cache_dir, augment=True,
+                                  norm_mode=norm_mode)
+    # Con normalización global, los límites se calculan SOLO con el fold de
+    # entrenamiento y se reutilizan en validación (sin fuga de información).
+    bounds = train_ds.compute_norm_bounds() if norm_mode == "global" else None
+    val_ds = GingivalSTLDataset(val_samples, cache_dir=cache_dir, augment=False,
+                                norm_mode=norm_mode, norm_bounds=bounds)
 
     train_loader = DataLoader(train_ds, batch_size=8, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False)
@@ -124,14 +130,18 @@ def train_one_fold(backbone_name: str, train_samples, val_samples,
 def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
                     k: int = 5, epochs: int = 10,
                     lr_head: float = 1e-3, lr_backbone: float = 1e-5,
-                    pretrained: bool = True):
+                    pretrained: bool = True, norm_mode: str = "per_image",
+                    backbones: list[str] | None = None):
+    backbones = backbones or BACKBONES
     device = "cuda" if torch.cuda.is_available() else "cpu"
     samples, labels = read_manifest(manifest_csv)
 
     skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
-    results = {name: [] for name in BACKBONES}
+    results = {name: [] for name in backbones}
 
-    for backbone_name in BACKBONES:
+    print(f"Normalización de canales: {norm_mode}")
+    Logger.traza("info", f"Normalización de canales: {norm_mode}")
+    for backbone_name in backbones:
         print(f"\n=== Backbone: {backbone_name} ===")
         Logger.traza("info", f"\n=== Backbone: {backbone_name} ===")
         for fold_idx, (train_idx, val_idx) in enumerate(skf.split(samples, labels)):
@@ -140,7 +150,7 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
 
             metrics = train_one_fold(
                 backbone_name, train_samples, val_samples, cache_dir,
-                epochs, lr_head, lr_backbone, device, pretrained,
+                epochs, lr_head, lr_backbone, device, pretrained, norm_mode,
             )
             results[backbone_name].append(metrics)
             degenerate = " <-- predicción casi constante" if metrics["pred_distribution"].max() >= len(val_samples) - 1 else ""
@@ -148,19 +158,30 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
                   f"accuracy={metrics['accuracy']:.3f}  f1={metrics['f1']:.3f}  "
                   f"(baseline mayoritario={metrics['baseline_acc']:.3f}, "
                   f"preds={metrics['pred_distribution'].tolist()}, "
-                  f"loss {metrics['loss_start']:.3f}->{metrics['loss_end']:.3f}){degenerate}")  
+                  f"loss {metrics['loss_start']:.3f}->{metrics['loss_end']:.3f}){degenerate}")
             Logger.traza("info", f"  Fold {fold_idx+1}/{k} -> "
                          f"accuracy={metrics['accuracy']:.3f}  f1={metrics['f1']:.3f}  "
                          f"(baseline mayoritario={metrics['baseline_acc']:.3f}, "
                          f"preds={metrics['pred_distribution'].tolist()}, "
                          f"loss {metrics['loss_start']:.3f}->{metrics['loss_end']:.3f}){degenerate}")  
 
-    
+        summed_confusion_matrix = np.sum(
+            [metrics["confusion_matrix"] for metrics in results[backbone_name]],
+            axis=0,
+        )
+        confusion_matrix_output = (
+            f"\nMatriz de confusión acumulada — {backbone_name} "
+            "(filas: real [fino, grueso]; columnas: predicción [fino, grueso]):\n"
+            f"{summed_confusion_matrix}"
+        )
+        print(confusion_matrix_output)
+        Logger.traza("info", confusion_matrix_output)
+
     print("\n=== Resumen comparativo (media ± desviación típica) ===")
     Logger.traza("info", "\n=== Resumen comparativo (media ± desviación típica) ===")
     print(f"{'Backbone':18s} {'Accuracy':>18s} {'F1':>18s}")
     Logger.traza("info", f"{'Backbone':18s} {'Accuracy':>18s} {'F1':>18s}")
-    for name in BACKBONES:
+    for name in backbones:
         accs = [m["accuracy"] for m in results[name]]
         f1s = [m["f1"] for m in results[name]]
         print(f"{name:18s} {np.mean(accs):.3f} ± {np.std(accs):.3f}    "
@@ -180,15 +201,21 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--no_pretrained", action="store_true",
                          help="Solo para pruebas offline sin descarga de pesos ImageNet")
+    parser.add_argument("--norm", choices=["per_image", "global"], default="per_image",
+                         help="per_image: cada canal de cada caso a [0,1] (original). "
+                              "global: mismos límites para todos los casos (calculados en train)")
+    parser.add_argument("--backbones", nargs="+", choices=BACKBONES, default=None,
+                         help="Subconjunto de backbones a evaluar (por defecto, los 4)")
     args = parser.parse_args()
-
     Logger.traza("info", f"Ejecutando comparación de backbones con manifest={args.manifest}, "
                        f"cache_dir={args.cache_dir}, k={args.k}, epochs={args.epochs}, no_pretrained={args.no_pretrained}") 
-
+    
     run_comparison(
         manifest_csv=args.manifest,
         cache_dir=args.cache_dir,
         k=args.k,
         epochs=args.epochs,
         pretrained=not args.no_pretrained,
+        norm_mode=args.norm,
+        backbones=args.backbones,
     )

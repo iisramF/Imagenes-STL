@@ -4,8 +4,16 @@ Dataset: STL -> imagen apilada de 3 canales (depth, curvature, render)
 Versión compacta: el pipeline completo de conversión STL -> 2.5D
 (normalización de malla, depth map, curvature map, render ortográfico)
 vive como métodos privados de GingivalSTLDataset, en vez de depender de
-funciones sueltas en stl_to_2_5d.py. La imagen resultante se cachea en
-disco como .npy para no recalcularla en cada época.
+funciones sueltas en stl_to_2_5d.py.
+
+Se cachean en disco los mapas SIN normalizar (valores físicos), y la
+normalización de cada canal se aplica después, al servir cada muestra:
+  - norm_mode="per_image": cada canal de cada caso se reescala a [0, 1]
+    con sus propios percentiles 2-98 (comportamiento original; descarta las
+    magnitudes absolutas entre casos).
+  - norm_mode="global": todos los casos comparten los mismos límites por
+    canal (percentiles 2-98 agrupados sobre el conjunto de ENTRENAMIENTO),
+    de modo que las diferencias de magnitud entre casos se conservan.
 """
 
 import os
@@ -16,7 +24,7 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
 from stl import mesh as stlmesh
-from project_logger import Logger
+from project_logger import Logger                                 
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -25,8 +33,12 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 class GingivalSTLDataset(Dataset):
     """
     samples: lista de tuplas (ruta_stl, label) con label en {0: fino, 1: grueso}.
-    cache_dir: si se indica, guarda/lee la imagen apilada como .npy para no
-    recalcular la conversión STL->2.5D en cada época (el paso más costoso).
+    cache_dir: si se indica, guarda/lee los mapas sin normalizar como .npy para
+    no recalcular la conversión STL->2.5D en cada época (el paso más costoso).
+    norm_mode: "per_image" (por defecto) o "global" (ver docstring del módulo).
+    norm_bounds: array (3, 2) con (límite_inf, límite_sup) por canal. Solo se
+    usa con norm_mode="global"; se obtiene con compute_norm_bounds() sobre el
+    dataset de entrenamiento y se pasa al de validación.
     augment: aplica aumentado geométrico 2D ligero (flip/rotación) sobre la
     imagen ya generada -- una aproximación pragmática al aumentado a nivel
     de malla 3D mencionado en las limitaciones metodológicas.
@@ -34,7 +46,13 @@ class GingivalSTLDataset(Dataset):
 
     def __init__(self, samples, resolution: int = 224,
                  cache_dir: str | None = None, augment: bool = False,
-                 curvature_radius: float = 1.0):
+                 curvature_radius: float = 1.0,
+                 norm_mode: str = "per_image", norm_bounds=None):
+        if norm_mode not in ("per_image", "global"):
+            raise ValueError(f"norm_mode no válido: {norm_mode}")
+        self.norm_mode = norm_mode
+        self.norm_bounds = (None if norm_bounds is None
+                            else np.asarray(norm_bounds, dtype=np.float32))
         self.samples = samples
         self.resolution = resolution
         self.cache_dir = cache_dir
@@ -125,43 +143,76 @@ class GingivalSTLDataset(Dataset):
             return np.zeros_like(array)
         return (array - lo) / (hi - lo)
 
-    def _stl_to_stacked_image(self, stl_path: str) -> np.ndarray:
-        """Orquesta el pipeline completo: STL -> [depth, curvature, render] en [0,1]."""
+    def _stl_to_raw_maps(self, stl_path: str) -> np.ndarray:
+        """Pipeline completo SIN normalizar: STL -> [depth, curvature, render] (H, W, 3)."""
         mesh = self._normalize_mesh(self._load_stl_as_trimesh(stl_path))
 
-        depth = self._minmax(self._generate_depth_map(mesh))
-        curvature = self._minmax(self._generate_curvature_map(mesh))
-        render = self._minmax(self._generate_orthographic_render(mesh))
+        depth = self._generate_depth_map(mesh)
+        curvature = self._generate_curvature_map(mesh)
+        render = self._generate_orthographic_render(mesh)
 
         return np.stack([depth, curvature, render], axis=-1).astype(np.float32)
+
+    # -----------------------------------------------------------------
+    # Normalización de canales
+    # -----------------------------------------------------------------
+
+    def compute_norm_bounds(self, low: float = 2, high: float = 98) -> np.ndarray:
+        """
+        Percentiles (low, high) por canal, agrupando todos los píxeles de todos
+        los casos de ESTE dataset. Llamarlo sobre el dataset de entrenamiento
+        (nunca sobre validación) y pasar el resultado como norm_bounds al de
+        validación. Guarda los límites en self.norm_bounds y los devuelve.
+        """
+        raws = [self._load_raw(path) for path, _ in self.samples]
+        bounds = np.zeros((3, 2), dtype=np.float32)
+        for c in range(3):
+            pooled = np.concatenate([r[..., c].ravel() for r in raws])
+            bounds[c] = np.percentile(pooled, [low, high])
+        self.norm_bounds = bounds
+        return bounds
+
+    def _normalize_channels(self, raw: np.ndarray) -> np.ndarray:
+        if self.norm_mode == "per_image":
+            return np.stack([self._minmax(raw[..., c]) for c in range(3)],
+                            axis=-1).astype(np.float32)
+
+        if self.norm_bounds is None:
+            raise RuntimeError(
+                "norm_mode='global' requiere norm_bounds: llama a "
+                "compute_norm_bounds() en el dataset de entrenamiento y pásalos "
+                "al de validación."
+            )
+        out = np.empty_like(raw)
+        for c in range(3):
+            lo, hi = self.norm_bounds[c]
+            ch = np.clip(raw[..., c], lo, hi)
+            out[..., c] = 0.0 if hi - lo < 1e-8 else (ch - lo) / (hi - lo)
+        return out
 
     # -----------------------------------------------------------------
     # Interfaz Dataset de PyTorch
     # -----------------------------------------------------------------
 
-    def _load_stacked(self, stl_path: str) -> np.ndarray:
+    def _load_raw(self, stl_path: str) -> np.ndarray:
         if self.cache_dir:
-            cache_path = os.path.join(
-                self.cache_dir, os.path.basename(stl_path) + f"_{self.resolution}.npy"
-            )
+            name = (f"{os.path.basename(stl_path)}_raw_r{self.curvature_radius}"
+                    f"_{self.resolution}.npy")
+            cache_path = os.path.join(self.cache_dir, name)
             if os.path.exists(cache_path):
                 return np.load(cache_path)
-            stacked = self._stl_to_stacked_image(stl_path)
-            Logger.traza("info", f"Cacheando imagen apilada en {cache_path}")
-            np.save(cache_path, stacked)
-            return stacked
-        return self._stl_to_stacked_image(stl_path)
+            raw = self._stl_to_raw_maps(stl_path)
+            Logger.traza("info", f"Cacheando imagen apilada en {cache_path}")                                                                             
+            np.save(cache_path, raw)
+            return raw
+        return self._stl_to_raw_maps(stl_path)
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         stl_path, label = self.samples[idx]
-        try:
-            stacked = self._load_stacked(stl_path)           # (H, W, 3) en [0,1]
-        except Exception as error:
-            Logger.traza("error", f"Error procesando STL {stl_path}: {error}")
-            raise
-        tensor = torch.from_numpy(stacked).permute(2, 0, 1)   # (3, H, W)
+        stacked = self._normalize_channels(self._load_raw(stl_path))  # (H, W, 3) en [0,1]
+        tensor = torch.from_numpy(stacked).permute(2, 0, 1)            # (3, H, W)
         tensor = self.transform(tensor)
         return tensor, torch.tensor(label, dtype=torch.long)
