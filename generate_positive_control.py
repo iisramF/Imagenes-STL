@@ -38,10 +38,22 @@ import csv
 import numpy as np
 import trimesh
 
-from dataset import GingivalSTLDataset
+from dataset import GingivalSTLDataset, add_view_args, view_kwargs
 
 
 def compute_feature(ds: GingivalSTLDataset, stl_path: str, mode: str) -> float:
+    if ds.view == "incisors_vestibular":
+        # Etiqueta calculada SOBRE EL MISMO RECORTE que ve el modelo (ventana del
+        # sector incisivo, en el marco anatómico, mm).
+        verts, curv = ds.incisor_sector_vertices(stl_path)
+        if mode == "height_range":
+            return float(np.ptp(verts[:, 2]))
+        if mode == "curvature_energy":
+            return float(np.sum(np.abs(curv)))
+        if mode == "curvature_mean":
+            return float(np.mean(np.abs(curv)))
+        raise ValueError(f"Modo no reconocido: {mode}")
+
     mesh = ds._normalize_mesh(ds._load_stl_as_trimesh(stl_path))
 
     if mode == "height_range":
@@ -65,12 +77,13 @@ def compute_feature(ds: GingivalSTLDataset, stl_path: str, mode: str) -> float:
     raise ValueError(f"Modo no reconocido: {mode}")
 
 
-def generate_manifest(input_manifest: str, output_manifest: str, mode: str = "height_range"):
+def generate_manifest(input_manifest: str, output_manifest: str, mode: str = "height_range",
+                      ds_kwargs: dict | None = None):
     with open(input_manifest, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         stl_paths = [row["stl_path"] for row in reader]
 
-    ds = GingivalSTLDataset(samples=[])  # instancia solo para reutilizar los métodos privados
+    ds = GingivalSTLDataset(samples=[], **(ds_kwargs or {}))  # solo para reutilizar sus métodos
 
     print(f"Calculando '{mode}' para {len(stl_paths)} casos...")
     features = [compute_feature(ds, path, mode) for path in stl_paths]
@@ -100,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_manifest", default="manifest_positive_control.csv")
     parser.add_argument("--mode", choices=["height_range", "curvature_energy", "curvature_mean"],
                          default="height_range")
+    add_view_args(parser)
     args = parser.parse_args()
 
-    generate_manifest(args.input_manifest, args.output_manifest, args.mode)
+    generate_manifest(args.input_manifest, args.output_manifest, args.mode, view_kwargs(args))

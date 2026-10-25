@@ -14,6 +14,7 @@ apartado 2.2 (arquitectura y transfer learning) del trabajo.
 
 import argparse
 import csv
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -22,8 +23,21 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 
 from backbones import build_backbone
-from dataset import GingivalSTLDataset
+from dataset import GingivalSTLDataset, add_view_args, view_kwargs
 from project_logger import Logger
+
+
+def set_seed(seed: int):
+    """Fija todas las fuentes de aleatoriedad del entrenamiento (inicialización de
+    la cabeza, orden de los lotes, aumentado de datos)."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
 
 BACKBONES = ["resnet50", "efficientnet_b3", "densenet121", "convnext_tiny"]
 
@@ -45,14 +59,18 @@ def read_manifest(csv_path: str):
 def train_one_fold(backbone_name: str, train_samples, val_samples,
                     cache_dir: str, epochs: int, lr_head: float, lr_backbone: float,
                     device: str, pretrained: bool = True,
-                    norm_mode: str = "per_image") -> dict:
+                    norm_mode: str = "per_image", seed: int | None = None,
+                    ds_kwargs: dict | None = None) -> dict:
+    ds_kwargs = ds_kwargs or {}
+    if seed is not None:
+        set_seed(seed)   # antes de crear el modelo: la cabeza nueva usa el RNG
     train_ds = GingivalSTLDataset(train_samples, cache_dir=cache_dir, augment=True,
-                                  norm_mode=norm_mode)
+                                  norm_mode=norm_mode, **ds_kwargs)
     # Con normalización global, los límites se calculan SOLO con el fold de
     # entrenamiento y se reutilizan en validación (sin fuga de información).
     bounds = train_ds.compute_norm_bounds() if norm_mode == "global" else None
     val_ds = GingivalSTLDataset(val_samples, cache_dir=cache_dir, augment=False,
-                                norm_mode=norm_mode, norm_bounds=bounds)
+                                norm_mode=norm_mode, norm_bounds=bounds, **ds_kwargs)
 
     train_loader = DataLoader(train_ds, batch_size=8, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=8, shuffle=False)
@@ -131,7 +149,8 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
                     k: int = 5, epochs: int = 10,
                     lr_head: float = 1e-3, lr_backbone: float = 1e-5,
                     pretrained: bool = True, norm_mode: str = "per_image",
-                    backbones: list[str] | None = None):
+                    backbones: list[str] | None = None, seed: int = 0,
+                    ds_kwargs: dict | None = None):
     backbones = backbones or BACKBONES
     device = "cuda" if torch.cuda.is_available() else "cpu"
     samples, labels = read_manifest(manifest_csv)
@@ -139,8 +158,8 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
     skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
     results = {name: [] for name in backbones}
 
-    print(f"Normalización de canales: {norm_mode}")
-    Logger.traza("info", f"Normalización de canales: {norm_mode}")
+    view = (ds_kwargs or {}).get("view", "occlusal")
+    print(f"Vista: {view} | normalización de canales: {norm_mode} | semilla de entrenamiento: {seed}")
     for backbone_name in backbones:
         print(f"\n=== Backbone: {backbone_name} ===")
         Logger.traza("info", f"\n=== Backbone: {backbone_name} ===")
@@ -151,6 +170,8 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
             metrics = train_one_fold(
                 backbone_name, train_samples, val_samples, cache_dir,
                 epochs, lr_head, lr_backbone, device, pretrained, norm_mode,
+                seed=seed + fold_idx,   # misma semilla por fold para todos los backbones
+                ds_kwargs=ds_kwargs,
             )
             results[backbone_name].append(metrics)
             degenerate = " <-- predicción casi constante" if metrics["pred_distribution"].max() >= len(val_samples) - 1 else ""
@@ -176,7 +197,7 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
         )
         print(confusion_matrix_output)
         Logger.traza("info", confusion_matrix_output)
-
+                         
     print("\n=== Resumen comparativo (media ± desviación típica) ===")
     Logger.traza("info", "\n=== Resumen comparativo (media ± desviación típica) ===")
     print(f"{'Backbone':18s} {'Accuracy':>18s} {'F1':>18s}")
@@ -187,8 +208,7 @@ def run_comparison(manifest_csv: str, cache_dir: str = "cache_2_5d",
         print(f"{name:18s} {np.mean(accs):.3f} ± {np.std(accs):.3f}    "
               f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f}")
         Logger.traza("info", f"{name:18s} {np.mean(accs):.3f} ± {np.std(accs):.3f}    "
-                     f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f}")
-
+                     f"{np.mean(f1s):.3f} ± {np.std(f1s):.3f}")    
     return results
 
 
@@ -206,10 +226,13 @@ if __name__ == "__main__":
                               "global: mismos límites para todos los casos (calculados en train)")
     parser.add_argument("--backbones", nargs="+", choices=BACKBONES, default=None,
                          help="Subconjunto de backbones a evaluar (por defecto, los 4)")
+    parser.add_argument("--seed", type=int, default=0,
+                         help="Semilla del entrenamiento (los folds NO cambian: siempre 42). "
+                              "Repite con --seed 1, 2... para estimar la variabilidad entre ejecuciones")
+    add_view_args(parser)
     args = parser.parse_args()
     Logger.traza("info", f"Ejecutando comparación de backbones con manifest={args.manifest}, "
                        f"cache_dir={args.cache_dir}, k={args.k}, epochs={args.epochs}, no_pretrained={args.no_pretrained}") 
-    
     run_comparison(
         manifest_csv=args.manifest,
         cache_dir=args.cache_dir,
@@ -218,4 +241,6 @@ if __name__ == "__main__":
         pretrained=not args.no_pretrained,
         norm_mode=args.norm,
         backbones=args.backbones,
+        seed=args.seed,
+        ds_kwargs=view_kwargs(args),
     )
