@@ -10,13 +10,20 @@ coordenadas atípico. Este script genera, para TODOS los casos del manifest:
   2. qc_orientation.csv con los diagnósticos numéricos por caso (para ajustar
      los umbrales de aviso mirando la distribución en TUS datos).
   3. orientation_overrides_template.csv con solo los casos marcados y las
-     columnas vacías flip_up, flip_front, rot_deg, para corregirlos a mano.
+     columnas vacías flip_up, flip_front, rot_deg, roll_deg, para corregirlos a
+     mano. (Los casos NO marcados también pueden necesitar corrección: revisa
+     todos los montajes, el aviso es solo una ayuda.)
 
 Qué buscar en el montaje (el sector incisivo bien orientado):
   - Borde incisal arriba, corona y encía hacia abajo, simétrico respecto al centro.
   - Si sale boca abajo           -> flip_up = 1
   - Si se ve la cara lingual     -> flip_front = 1
-  - Si el sector sale girado/oblicuo -> rot_deg = grados (prueba +/- 10, 20...)
+  - Si el sector se ve oblicuo (dientes de un lado mucho más estrechos)
+                                 -> rot_deg = grados (prueba +/- 15)
+  - Si la hilera de dientes sale ladeada (inclinada en la propia imagen)
+                                 -> roll_deg = grados (prueba +/- 10, 20...).
+    La columna roll_est_deg del CSV es una estimación de ese ángulo a partir
+    del contorno incisal; si coincide con lo que ves, úsala como punto de partida.
 Después de corregir, vuelve a ejecutar con --overrides orientation_overrides.csv.
 
 Uso:
@@ -57,21 +64,23 @@ def main(args):
         print(f"  [{i}/{len(paths)}] {os.path.basename(path)}  "
               f"{'AVISO: ' + ', '.join(diag['reasons']) if diag['reasons'] else 'ok'}")
 
-    fields = ["arch_width_mm", "arch_depth_mm", "vert_conf", "front_ratio",
-              "sym_score", "sym_margin", "coverage", "n_front_vertices"]
+    fields = ["arch_width_mm", "arch_depth_mm", "vert_conf", "vert_cue", "foot_ratio",
+              "rough_ratio", "v_world_z", "front_ratio", "sym_score", "sym_margin",
+              "roll_est_deg", "coverage", "dropped_fragments", "n_front_vertices"]
     with open(args.csv, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["index", "stl_path", "flagged", "reasons"] + fields)
         for i, (path, d) in enumerate(records, 1):
             w.writerow([i, path, int(bool(d["reasons"])), "; ".join(d["reasons"])]
-                       + [round(d[k], 3) if k in d else "" for k in fields])
+                       + [("" if k not in d else d[k] if isinstance(d[k], str) else round(d[k], 3))
+                          for k in fields])
 
     flagged = [(p, d) for p, d in records if d["reasons"]]
     with open(args.overrides_template, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
-        w.writerow(["stl_path", "flip_up", "flip_front", "rot_deg"])
+        w.writerow(["stl_path", "flip_up", "flip_front", "rot_deg", "roll_deg"])
         for p, _ in flagged:
-            w.writerow([p, "", "", ""])
+            w.writerow([p, "", "", "", ""])
 
     # Montajes paginados
     n_pages = int(np.ceil(len(paths) / args.per_page))
@@ -98,7 +107,10 @@ def main(args):
         plt.close(fig)
         print(f"Montaje guardado: {out}")
 
-    print(f"\n{len(flagged)} de {len(paths)} casos con avisos.")
+    cues = [d.get("vert_cue") for _, d in records if "vert_cue" in d]
+    print(f"\nSentido vertical decidido por: normales {cues.count('normales')} casos | "
+          f"eje Z del fichero {cues.count('eje_z')} | huella (poco fiable) {cues.count('huella')}.")
+    print(f"{len(flagged)} de {len(paths)} casos con avisos.")
     print(f"Diagnósticos: {args.csv}")
     print(f"Plantilla de correcciones (solo casos marcados): {args.overrides_template}")
 

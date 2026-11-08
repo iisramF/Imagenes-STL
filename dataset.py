@@ -22,6 +22,7 @@ import numpy as np
 import trimesh
 from scipy import ndimage
 from scipy.interpolate import griddata
+from scipy.stats import theilslopes
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
@@ -36,18 +37,20 @@ VIEWS = ("occlusal", "incisors_vestibular")
 
 def load_orientation_overrides(csv_path: str) -> dict:
     """
-    CSV con columnas: stl_path, flip_up (0/1), flip_front (0/1), rot_deg (grados;
-    vacío = 0). Sirve para corregir a mano los casos en que la orientación
-    automática falla (ver qc_incisor_views.py): flip_up invierte arriba/abajo,
-    flip_front invierte delante/detrás y rot_deg gira la dirección frontal en el
-    plano oclusal. Se indexa por ruta completa y por nombre de fichero.
+    CSV con columnas: stl_path, flip_up (0/1), flip_front (0/1), rot_deg y
+    roll_deg (grados; vacío = 0). Sirve para corregir a mano los casos en que la
+    orientación automática falla (ver qc_incisor_views.py): flip_up invierte
+    arriba/abajo, flip_front invierte delante/detrás, rot_deg gira la dirección
+    de la vista en el plano oclusal (más o menos oblicua) y roll_deg inclina la
+    imagen en su propio plano (para nivelar una hilera de dientes ladeada). Se indexa por ruta completa y por nombre de fichero.
     """
     overrides = {}
     with open(csv_path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             flags = {"flip_up": int(row.get("flip_up") or 0),
                      "flip_front": int(row.get("flip_front") or 0),
-                     "rot_deg": float(row.get("rot_deg") or 0)}
+                     "rot_deg": float(row.get("rot_deg") or 0),
+                     "roll_deg": float(row.get("roll_deg") or 0)}
             overrides[row["stl_path"]] = flags
             overrides.setdefault(os.path.basename(row["stl_path"]), flags)
     return overrides
@@ -62,14 +65,18 @@ def add_view_args(parser):
                         help="Lado (mm) de la ventana cuadrada de la vista vestibular")
     parser.add_argument("--depth_mm", type=float, default=15.0,
                         help="Profundidad (mm) hacia atrás desde el ápice incisivo")
+    parser.add_argument("--up_world", choices=["auto", "z+", "z-"], default="auto",
+                        help="Si las normales no deciden qué lado es oclusal y el eje vertical "
+                             "coincide con el Z del fichero, usar +Z (z+) o -Z (z-) como arriba")
     parser.add_argument("--overrides", default=None,
-                        help="CSV de correcciones de orientación (stl_path,flip_up,flip_front,rot_deg)")
+                        help="CSV de correcciones de orientación (stl_path,flip_up,flip_front,rot_deg,roll_deg)")
 
 
 def view_kwargs(args) -> dict:
     """Convierte los argumentos de add_view_args en kwargs de GingivalSTLDataset."""
     return dict(
         view=args.view, window_mm=args.window_mm, depth_mm=args.depth_mm,
+        up_world=args.up_world,
         orientation_overrides=(load_orientation_overrides(args.overrides)
                                if args.overrides else None),
     )
@@ -85,6 +92,10 @@ class GingivalSTLDataset(Dataset):
     norm_bounds: array (3, 2) con (límite_inf, límite_sup) por canal. Solo se
     usa con norm_mode="global"; se obtiene con compute_norm_bounds() sobre el
     dataset de entrenamiento y se pasa al de validación.
+    up_world: "auto" (por defecto), "z+" o "z-". Con "z+"/"z-", si la normal no permite
+    decidir qué lado es oclusal (mallas cerradas) y el eje vertical hallado coincide
+    con el eje Z del fichero (|cos| >= 0.97, unos 14°), se toma +Z (o -Z) como "arriba".
+    Úsalo solo si has comprobado que tus ficheros siguen esa convención.
     view: "occlusal" (vista en planta de toda la arcada, orientación por PCA) o
     "incisors_vestibular" (sector incisivo visto desde vestibular, orientación
     anatómica, ventana cuadrada de window_mm milímetros: misma escala en todos
@@ -100,9 +111,13 @@ class GingivalSTLDataset(Dataset):
                  norm_mode: str = "per_image", norm_bounds=None,
                  view: str = "occlusal", window_mm: float = 36.0,
                  depth_mm: float = 15.0, top_margin_mm: float = 3.0,
-                 orientation_overrides: dict | None = None):
+                 orientation_overrides: dict | None = None,
+                 up_world: str = "auto"):
         if view not in VIEWS:
             raise ValueError(f"view no válida: {view}")
+        if up_world not in ("auto", "z+", "z-"):
+            raise ValueError(f"up_world no válido: {up_world}")
+        self.up_world = up_world
         self.view = view
         self.window_mm = float(window_mm)
         self.depth_mm = float(depth_mm)
@@ -223,7 +238,7 @@ class GingivalSTLDataset(Dataset):
     #   oclusal (v). La cámara está delante de los incisivos mirando hacia atrás.
 
     def _flags_for(self, stl_path: str) -> dict:
-        flags = {"flip_up": 0, "flip_front": 0, "rot_deg": 0.0}
+        flags = {"flip_up": 0, "flip_front": 0, "rot_deg": 0.0, "roll_deg": 0.0}
         overrides = self.orientation_overrides or {}
         found = overrides.get(stl_path) or overrides.get(os.path.basename(stl_path))
         if found:
@@ -246,9 +261,44 @@ class GingivalSTLDataset(Dataset):
         # Eje vertical: menor varianza. Signo: hacia donde apunta la suma de
         # normales ponderadas por área (en un escaneo abierto, hacia oclusal).
         v = evecs[:, 0]
+        b1, b2 = evecs[:, 1], evecs[:, 2]
         vert_conf = float((A * (mesh.face_normals @ v)).sum() / wsum)
-        if vert_conf < 0:
-            v, vert_conf = -v, -vert_conf
+        vert_cue, foot_ratio = "normales", float("nan")
+        if abs(vert_conf) >= 0.15:
+            if vert_conf < 0:
+                v = -v
+        elif self.up_world != "auto" and abs(v[2]) >= 0.97:
+            # Convención del fichero: el eje vertical coincide con Z y se sabe hacia
+            # dónde está "arriba" (comprobado a mano con el control de calidad).
+            vert_cue = "eje_z"
+            if v[2] * (1.0 if self.up_world == "z+" else -1.0) < 0:
+                v = -v
+        else:
+            # Malla cerrada (o normales no fiables): la suma de normales es ~0 y no
+            # dice qué lado es oclusal. Se compara la huella en planta de los
+            # extremos superior e inferior: las coronas forman un anillo estrecho,
+            # y la base (losa en un modelo cerrado; mucosa y suelo de boca en un
+            # escaneo abierto) es más ancha. El lado estrecho se pone hacia oclusal.
+            vert_cue = "huella"
+            Vh = mesh.vertices - m
+            h = Vh @ v
+            cells = np.floor(np.column_stack([Vh @ b1, Vh @ b2]) / 1.5).astype(np.int64)
+            h_lo, h_hi = np.percentile(h, [1, 99])
+            span_h = h_hi - h_lo
+            n_bottom = len(np.unique(cells[h <= h_lo + 0.2 * span_h], axis=0))
+            n_top = len(np.unique(cells[h >= h_hi - 0.2 * span_h], axis=0))
+            if n_top > n_bottom:
+                v = -v
+            foot_ratio = float(max(n_top, n_bottom) / max(min(n_top, n_bottom), 1))
+        vert_conf = abs(vert_conf)
+
+        # Diagnósticos del sentido automático (antes de la corrección manual)
+        hc = D @ v
+        hc_lo, hc_hi = np.percentile(hc, [1, 99])
+        band = lambda mk: 1 - np.linalg.norm((A[mk, None] * mesh.face_normals[mk]).sum(0)) / max(A[mk].sum(), 1e-9)
+        rough_ratio = float(band(hc >= hc_hi - 0.15 * (hc_hi - hc_lo)) /
+                            max(band(hc <= hc_lo + 0.15 * (hc_hi - hc_lo)), 1e-6))
+        v_world_z = float(v[2])
         if flags["flip_up"]:
             v = -v
 
@@ -305,6 +355,9 @@ class GingivalSTLDataset(Dataset):
             phi = np.deg2rad(flags["rot_deg"])
             a = np.cos(phi) * a + np.sin(phi) * np.cross(v, a)
         u = np.cross(v, a)
+        if flags["roll_deg"]:                      # inclinación manual de la imagen
+            rho = np.deg2rad(flags["roll_deg"])
+            u, v = np.cos(rho) * u + np.sin(rho) * v, -np.sin(rho) * u + np.cos(rho) * v
         T = np.column_stack([u, a, v])
 
         Fv = (mesh.vertices - m) @ T      # vértices en el marco anatómico
@@ -327,15 +380,33 @@ class GingivalSTLDataset(Dataset):
                  (Fv[:, 1] >= win["a_min"]) & (Fv[:, 1] <= a_apex + 1.0))
 
         a_lo, a_hi = np.percentile(Fc[:, 1], [1, 99])
+
+        # Inclinación aparente del contorno superior (bordes incisales). Solo la parte
+        # central de la ventana (±13 mm): en los extremos la arcada se curva y se
+        # aleja (caninos/premolares) y falsearía la recta. Ajuste robusto (Theil-Sen).
+        roll_est = float("nan")
+        uu, vv = Fv[inbox, 0], Fv[inbox, 2]
+        u_c = win["u_left"] + W / 2
+        edges_u = np.linspace(u_c - 13.0, u_c + 13.0, 11)
+        cx, ct = [], []
+        for i in range(10):
+            mk = (uu >= edges_u[i]) & (uu < edges_u[i + 1])
+            if mk.sum() > 30:
+                cx.append(0.5 * (edges_u[i] + edges_u[i + 1])); ct.append(np.percentile(vv[mk], 95))
+        if len(cx) >= 6:
+            roll_est = float(np.degrees(np.arctan(theilslopes(ct, cx)[0])))
+
         diag = dict(
             arch_width_mm=float(u_hi - u_lo), arch_depth_mm=float(a_hi - a_lo),
+            vert_cue=vert_cue, foot_ratio=foot_ratio, rough_ratio=rough_ratio,
+            v_world_z=v_world_z, roll_est_deg=roll_est,
             vert_conf=vert_conf,
             front_ratio=float(max(ext_lo, ext_hi) / max(min(ext_lo, ext_hi), 1e-6)),
             sym_score=sym_score, sym_margin=sym_margin,
         )
         return dict(mesh=mesh, m=m, T=T, Fv=Fv, inbox=inbox, win=win, diag=diag)
 
-    def incisor_view(self, stl_path: str):
+    def incisor_view(self, stl_path: str, return_vertices: bool = False):
         """
         Vista vestibular del sector incisivo. Devuelve (raw, diag):
           raw  (N, N, 3) float32 = [profundidad, curvatura, render] SIN normalizar.
@@ -356,6 +427,7 @@ class GingivalSTLDataset(Dataset):
         curv = np.full((N, N), np.nan, dtype=np.float32)
         rend = np.full((N, N), np.nan, dtype=np.float32)
 
+        iw = rw = cw = curv_w = None
         if len(idx) > 0:
             r = np.clip(((win["v_top"] - Fv[idx, 2]) / pix).astype(int), 0, N - 1)
             c = np.clip(((Fv[idx, 0] - win["u_left"]) / pix).astype(int), 0, N - 1)
@@ -365,14 +437,15 @@ class GingivalSTLDataset(Dataset):
             winner = d >= buf[r, c] - 1e-6
             iw, rw, cw = idx[winner], r[winner], c[winner]
             depth[rw, cw] = d[winner]
-            curv[rw, cw] = trimesh.curvature.discrete_mean_curvature_measure(
+            curv_w = trimesh.curvature.discrete_mean_curvature_measure(
                 mesh, mesh.vertices[iw], radius=self.curvature_radius)
+            curv[rw, cw] = curv_w
             light = np.array([-0.3, 1.0, 0.4])
             light /= np.linalg.norm(light)
             rend[rw, cw] = np.clip(vn[iw] @ light, 0, 1)
 
         valid = np.isfinite(depth)
-        coverage, closed = 0.0, valid
+        coverage, closed, dropped = 0.0, valid, 0
         if valid.sum() >= 4:
             # Cerrar huecos por falta de vértices (no el fondo vacío) y rellenarlos
             iters = int(np.clip(np.ceil(mesh.edges_unique_length.mean() / pix), 1, 12))
@@ -380,6 +453,18 @@ class GingivalSTLDataset(Dataset):
             closed = ndimage.binary_closing(padded, structure=np.ones((3, 3), bool),
                                             iterations=iters)[iters:-iters, iters:-iters]
             closed = ndimage.binary_fill_holes(closed)
+            # Descartar fragmentos pequeños desconectados de la superficie principal
+            # (p. ej. la pared de la base en modelos cerrados: una línea fina separada
+            # de la encía). Esos fragmentos no tienen información clínica y solo
+            # aparecen en cierto tipo de archivo, así que serían un atajo para la red.
+            lab, n_lab = ndimage.label(closed, structure=np.ones((3, 3), bool))
+            if n_lab > 1:
+                sizes = ndimage.sum(closed, lab, index=np.arange(1, n_lab + 1))
+                keep_ids = np.where(sizes >= 0.05 * sizes.max())[0] + 1
+                keep = np.isin(lab, keep_ids)
+                dropped = int(n_lab - len(keep_ids))
+                closed = closed & keep
+                valid = valid & keep
             holes = closed & ~valid
             if holes.any():
                 pts = np.column_stack(np.where(valid))
@@ -397,31 +482,41 @@ class GingivalSTLDataset(Dataset):
         rend[~closed] = 0.0
 
         reasons = []
-        if not diag["vert_conf"] >= 0.15:
+        if diag["vert_cue"] == "huella" and not diag["foot_ratio"] >= 1.25:
             reasons.append("vertical dudosa")
         if not diag["front_ratio"] >= 1.25:
             reasons.append("frente dudoso")
-        if diag["sym_margin"] > 0.7 or diag["sym_score"] > 0.25:
-            reasons.append("ejes ambiguos o arcada asimétrica")
+        # sym_margin (no sym_score) es el que sigue al error de orientación: en
+        # arcadas sintéticas 0.03 -> 3°, 0.48 -> 9°, 0.59 -> 12°, 0.74 -> 25°.
+        # En tres arcadas reales con buena vista salió 0.24-0.40.
+        if diag["sym_margin"] > 0.6:
+            reasons.append("eje dudoso (arcada muy asimétrica)")
         if diag["arch_width_mm"] < 45 or diag["arch_depth_mm"] < 25:
             reasons.append("arcada pequeña (¿escaneo parcial?)")
         if coverage < 0.15:
             reasons.append("ventana casi vacía")
-        diag.update(coverage=coverage, reasons=reasons, n_front_vertices=int(len(idx)))
+        diag.update(coverage=coverage, reasons=reasons, n_front_vertices=int(len(idx)),
+                    dropped_fragments=dropped)
 
-        return np.stack([depth, curv, rend], axis=-1).astype(np.float32), diag
+        raw = np.stack([depth, curv, rend], axis=-1).astype(np.float32)
+        if return_vertices:
+            # Vértices que realmente aportan al mapa: frontales, ganadores del
+            # z-buffer y que sobreviven a la limpieza de fragmentos.
+            if iw is None:
+                return raw, diag, (np.zeros((0, 3)), np.zeros(0))
+            kept = valid[rw, cw]
+            return raw, diag, (g["Fv"][iw[kept]], curv_w[kept])
+        return raw, diag
 
     def incisor_sector_vertices(self, stl_path: str):
         """
-        Vértices dentro de la ventana del sector (coordenadas del marco anatómico,
-        en mm) y su curvatura media discreta. Sirve para calcular las etiquetas de
-        control SOBRE EL MISMO RECORTE que ve el modelo.
+        Vértices (marco anatómico, mm) y curvatura de los puntos que forman el
+        mapa de la vista vestibular: frontales, ganadores del z-buffer y sin
+        fragmentos descartados. Las etiquetas de control se calculan sobre
+        EXACTAMENTE lo que ve el modelo.
         """
-        g = self._incisor_geometry(stl_path)
-        idx = np.where(g["inbox"])[0]
-        curv = trimesh.curvature.discrete_mean_curvature_measure(
-            g["mesh"], g["mesh"].vertices[idx], radius=self.curvature_radius)
-        return g["Fv"][idx], curv
+        _, _, (verts, curv) = self.incisor_view(stl_path, return_vertices=True)
+        return verts, curv
 
     # -----------------------------------------------------------------
     # Normalización de canales
@@ -471,14 +566,14 @@ class GingivalSTLDataset(Dataset):
                 name = f"{base}_raw_r{self.curvature_radius}_{self.resolution}.npy"
             else:
                 fl = self._flags_for(stl_path)
-                tag = f"{fl['flip_up']}{fl['flip_front']}{fl['rot_deg']:g}"
+                tag = f"{fl['flip_up']}{fl['flip_front']}{fl['rot_deg']:g}_{fl['roll_deg']:g}"
                 name = (f"{base}_incv_w{self.window_mm}_d{self.depth_mm}_m{self.top_margin_mm}"
-                        f"_o{tag}_r{self.curvature_radius}_{self.resolution}.npy")
+                        f"_o{tag}_u{self.up_world}_r{self.curvature_radius}_{self.resolution}.npy")
             cache_path = os.path.join(self.cache_dir, name)
             if os.path.exists(cache_path):
                 return np.load(cache_path)
             raw = self._stl_to_raw_maps(stl_path)
-            Logger.traza("info", f"Cacheando imagen apilada en {cache_path}")
+            Logger.traza("info", f"Cacheando imagen apilada en {cache_path}")                                                                 
             np.save(cache_path, raw)
             return raw
         return self._stl_to_raw_maps(stl_path)

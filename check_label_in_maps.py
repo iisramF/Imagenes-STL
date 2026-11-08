@@ -38,7 +38,28 @@ from dataset import GingivalSTLDataset, add_view_args, view_kwargs
 from generate_positive_control import compute_feature
 
 
-def map_summaries(raw: np.ndarray) -> dict:
+def map_summaries(raw: np.ndarray, depth_mm: float | None = None) -> dict:
+    # Solo píxeles cubiertos: el fondo (profundidad = -depth_mm, curvatura 0)
+    # haría que los resúmenes midieran cuánta superficie cabe en la ventana.
+    if depth_mm is not None:
+        m = raw[..., 0] > -depth_mm + 1e-3
+        if m.sum() >= 10:
+            d, cu, r = raw[..., 0][m], raw[..., 1][m], raw[..., 2][m]
+            gy, gx = np.gradient(raw[..., 0])
+            slope = np.sqrt(gx**2 + gy**2)[m]
+            p5, p95 = np.percentile(d, [5, 95])
+            c5, c95 = np.percentile(cu, [5, 95])
+            return {
+                "depth_range": float(d.max() - d.min()),
+                "depth_p95_p5": float(p95 - p5),
+                "depth_std": float(d.std()),
+                "slope_mean": float(slope.mean()),
+                "curv_mean_abs": float(np.abs(cu).mean()),
+                "curv_std": float(cu.std()),
+                "curv_p95_p5": float(c95 - c5),
+                "render_mean": float(r.mean()),
+                "render_std": float(r.std()),
+            }
     depth, curv, render = raw[..., 0], raw[..., 1], raw[..., 2]
     gy, gx = np.gradient(depth)
     slope = np.sqrt(gx**2 + gy**2)
@@ -69,7 +90,7 @@ def main(manifest: str, mode: str, cache_dir: str, resolution: int, out_csv: str
 
     feats, summaries = [], []
     for i, (path, _) in enumerate(samples, 1):
-        summaries.append(map_summaries(ds._load_raw(path)))
+        summaries.append(map_summaries(ds._load_raw(path), depth_mm=ds.depth_mm if ds.view != "occlusal" else None))
         feats.append(compute_feature(ds, path, mode))
         print(f"  [{i}/{len(samples)}] {path}")
     feats = np.array(feats)

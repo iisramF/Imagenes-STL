@@ -2,7 +2,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 from stl import mesh as stlmesh
 
-def make_arch(path, X=28.0, depth=42.0, seed=0, rotate=True, jitter=0.0, left=1.0, right=1.0):
+def make_arch(path, X=28.0, depth=42.0, seed=0, rotate=True, jitter=0.0, left=1.0, right=1.0, closed=False, zbase=-26.0, rot=None):
     """Arcada inferior sintética. Frente (incisivos) = +y, oclusal = +z antes de rotar.
     Devuelve (R, t): rotación y traslación aplicadas, para conocer la verdad."""
     rng = np.random.default_rng(seed)
@@ -28,7 +28,33 @@ def make_arch(path, X=28.0, depth=42.0, seed=0, rotate=True, jitter=0.0, left=1.
             a, b, c, d = idx(i, j), idx(i + 1, j), idx(i, j + 1), idx(i + 1, j + 1)
             F += [[a, b, c], [b, d, c]]          # normales hacia +z en la zona oclusal
     F = np.array(F)
-    R = Rotation.random(random_state=seed) if rotate else Rotation.identity()
+    if closed:
+        # Malla cerrada: superficie superior + base plana + 4 paredes laterales
+        nt, ns = len(t), len(s)
+        Vb = V.copy(); Vb[:, 2] = zbase
+        off = len(V); V = np.vstack([V, Vb])
+        Fb = [[a + off, c + off, b + off] for a, b, c in F[::2]] + [[b + off, c + off, d + off] for b, d, c in [(f[0], f[1], f[2]) for f in F[1::2]]]
+        # base: mismos cuadrados con orientación invertida (normales hacia abajo)
+        Fb = []
+        for i in range(nt - 1):
+            for j in range(ns - 1):
+                a, b, c, d = idx(i, j) + off, idx(i + 1, j) + off, idx(i, j + 1) + off, idx(i + 1, j + 1) + off
+                Fb += [[a, c, b], [b, c, d]]
+        walls = []
+        def wall(p, q):          # arista superior p->q y su inferior; normal hacia fuera
+            walls.extend([[p, q + off, q], [p, p + off, q + off]])
+        for i in range(nt - 1):
+            wall(idx(i + 1, 0), idx(i, 0))                    # borde s mínimo
+            wall(idx(i, ns - 1), idx(i + 1, ns - 1))          # borde s máximo
+        for j in range(ns - 1):
+            wall(idx(0, j), idx(0, j + 1))                    # extremo t mínimo
+            wall(idx(nt - 1, j + 1), idx(nt - 1, j))          # extremo t máximo
+        F = np.vstack([F, Fb, walls])
+        import trimesh
+        _m = trimesh.Trimesh(V, F, process=True)
+        trimesh.repair.fix_normals(_m)          # winding coherente y normales hacia fuera
+        V, F = np.asarray(_m.vertices), np.asarray(_m.faces)
+    R = rot if rot is not None else (Rotation.random(random_state=seed) if rotate else Rotation.identity())
     tr = rng.uniform(-50, 50, 3)
     V = R.apply(V) + tr
     d = np.zeros(F.shape[0], dtype=stlmesh.Mesh.dtype)
