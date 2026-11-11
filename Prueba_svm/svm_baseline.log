@@ -1,0 +1,43 @@
+Vista: incisors_vestibular | normalización: global | casos: 126 (fino=63, grueso=63)
+
+=== SVM con características: summaries ===
+  Fold 1/5 -> accuracy=0.769  f1=0.769  (baseline mayoritario=0.500, preds=[13, 13], CV interna=0.790, SVM={'C': 1, 'gamma': 0.3, 'kernel': 'rbf'})
+  Fold 2/5 -> accuracy=0.720  f1=0.696  (baseline mayoritario=0.520, preds=[14, 11], CV interna=0.812, SVM={'C': 10, 'kernel': 'linear'})
+  Fold 3/5 -> accuracy=0.720  f1=0.741  (baseline mayoritario=0.520, preds=[10, 15], CV interna=0.782, SVM={'C': 10, 'kernel': 'linear'})
+  Fold 4/5 -> accuracy=0.680  f1=0.692  (baseline mayoritario=0.520, preds=[12, 13], CV interna=0.793, SVM={'C': 0.01, 'kernel': 'linear'})
+  Fold 5/5 -> accuracy=0.840  f1=0.833  (baseline mayoritario=0.520, preds=[14, 11], CV interna=0.803, SVM={'C': 1, 'gamma': 'scale', 'kernel': 'rbf'})
+
+Matriz de confusión acumulada — summaries (filas: real [fino, grueso]; columnas: predicción [fino, grueso]):
+[[47 16]
+ [16 47]]
+Predicciones por caso: svm_predictions_summaries.csv   (7 s)
+
+=== SVM con características: pixels ===
+  Fold 1/5 -> accuracy=0.731  f1=0.720  (baseline mayoritario=0.500, preds=[14, 12], CV interna=0.680, SVM={'C': 0.01, 'kernel': 'linear'})
+  Fold 2/5 -> accuracy=0.680  f1=0.667  (baseline mayoritario=0.520, preds=[13, 12], CV interna=0.773, SVM={'C': 10, 'gamma': 0.001, 'kernel': 'rbf'})
+  Fold 3/5 -> accuracy=0.720  f1=0.741  (baseline mayoritario=0.520, preds=[10, 15], CV interna=0.643, SVM={'C': 0.1, 'kernel': 'linear'})
+  Fold 4/5 -> accuracy=0.720  f1=0.759  (baseline mayoritario=0.520, preds=[9, 16], CV interna=0.623, SVM={'C': 1, 'gamma': 0.0001, 'kernel': 'rbf'})
+  Fold 5/5 -> accuracy=0.600  f1=0.545  (baseline mayoritario=0.520, preds=[16, 9], CV interna=0.713, SVM={'C': 0.01, 'kernel': 'linear'})
+
+Matriz de confusión acumulada — pixels (filas: real [fino, grueso]; columnas: predicción [fino, grueso]):
+[[43 20]
+ [19 44]]
+Predicciones por caso: svm_predictions_pixels.csv   (3 s)
+
+=== SVM con características: embeddings (resnet50) ===
+  Fold 1/5 -> accuracy=0.769  f1=0.769  (baseline mayoritario=0.500, preds=[13, 13], CV interna=0.679, SVM={'C': 10, 'gamma': 0.0001, 'kernel': 'rbf'})
+  Fold 2/5 -> accuracy=0.560  f1=0.560  (baseline mayoritario=0.520, preds=[12, 13], CV interna=0.703, SVM={'C': 10, 'gamma': 0.0001, 'kernel': 'rbf'})
+  Fold 3/5 -> accuracy=0.720  f1=0.720  (baseline mayoritario=0.520, preds=[12, 13], CV interna=0.633, SVM={'C': 1, 'gamma': 'scale', 'kernel': 'rbf'})
+  Fold 4/5 -> accuracy=0.640  f1=0.640  (baseline mayoritario=0.520, preds=[13, 12], CV interna=0.695, SVM={'C': 0.01, 'kernel': 'linear'})
+  Fold 5/5 -> accuracy=0.680  f1=0.692  (baseline mayoritario=0.520, preds=[12, 13], CV interna=0.634, SVM={'C': 0.01, 'kernel': 'linear'})
+
+Matriz de confusión acumulada — embeddings (filas: real [fino, grueso]; columnas: predicción [fino, grueso]):
+[[42 21]
+ [20 43]]
+Predicciones por caso: svm_predictions_embeddings.csv   (16 s)
+
+=== Resumen comparativo (media ± desviación típica entre folds) ===
+Características              Accuracy                 F1
+summaries          0.746 ± 0.055    0.746 ± 0.052
+pixels             0.690 ± 0.048    0.686 ± 0.077
+embeddings         0.674 ± 0.071    0.676 ± 0.072

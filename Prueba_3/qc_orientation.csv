@@ -1,0 +1,4 @@
+﻿index,stl_path,flagged,reasons,arch_width_mm,arch_depth_mm,vert_conf,front_ratio,sym_score,sym_margin,coverage,n_front_vertices
+1,Y:\Máster\TFM\Imágenes STL\Walter\PRE\132465641_lprofile_occlusion_l.stl,1,vertical dudosa,55.396,41.033,0.0,1.951,0.163,0.24,0.362,26572
+2,Y:\Máster\TFM\Imágenes STL\3DTeethSeg\Imágenes\lower\OS06596E\OS06596E_lower.stl,1,ejes ambiguos o arcada asimétrica,69.176,46.056,0.401,2.051,0.294,0.399,0.394,17370
+3,Y:\Máster\TFM\Imágenes STL\3DTeethSeg\Imágenes\lower\P0YTJU57\P0YTJU57_lower.stl,1,ejes ambiguos o arcada asimétrica,63.814,48.24,0.332,2.039,0.311,0.396,0.447,20319

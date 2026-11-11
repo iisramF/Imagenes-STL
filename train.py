@@ -233,6 +233,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     Logger.traza("info", f"Ejecutando comparación de backbones con manifest={args.manifest}, "
                        f"cache_dir={args.cache_dir}, k={args.k}, epochs={args.epochs}, no_pretrained={args.no_pretrained}") 
+    Logger.traza("info", f"norm={args.norm}, backbones={args.backbones}, seed={args.seed}, view={args.view}")
     run_comparison(
         manifest_csv=args.manifest,
         cache_dir=args.cache_dir,

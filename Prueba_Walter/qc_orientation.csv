@@ -1,0 +1,9 @@
+﻿index,stl_path,flagged,reasons,arch_width_mm,arch_depth_mm,vert_conf,front_ratio,sym_score,sym_margin,coverage,n_front_vertices
+1,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\AE\265522594_lprofile_occlusion_l.stl,1,vertical dudosa,60.453,54.646,0.0,1.825,0.225,0.345,0.386,26447
+2,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\AG\119622815_lprofile_occlusion_l.stl,1,vertical dudosa,58.528,44.548,0.0,1.928,0.196,0.283,0.335,23968
+3,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\AGC\320658415_lprofile_occlusion_l.stl,1,vertical dudosa,61.444,51.213,0.0,2.02,0.174,0.274,0.477,34179
+4,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\AGL\117929844_lprofile_occlusion_l.stl,1,vertical dudosa,63.311,48.241,0.0,2.104,0.237,0.299,0.404,30803
+5,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\AL\237735175_lprofile_occlusion_l.stl,1,vertical dudosa,60.447,43.504,0.0,2.122,0.16,0.214,0.346,24492
+6,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\AW\327540847_lprofile_occlusion_l.stl,1,vertical dudosa; ejes ambiguos o arcada asimétrica,59.861,45.945,0.0,1.875,0.286,0.408,0.483,33647
+7,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\KO\161929680_lprofile_occlusion_l.stl,1,vertical dudosa,59.525,41.521,0.0,2.211,0.244,0.348,0.335,33483
+8,Y:\Máster\TFM\Imágenes STL\Walter\Biotipo_grueso\MR\320386554_lprofile_occlusion_l.stl,1,vertical dudosa,61.815,45.784,0.0,2.091,0.154,0.234,0.425,27753

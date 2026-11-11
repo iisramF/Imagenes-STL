@@ -1,0 +1,4 @@
+Calculando 'curvature_mean' para 126 casos...
+Umbral (mediana de 'curvature_mean'): 0.6299
+Manifest de control positivo guardado en: .\Prueba_3DTS\manifest_cm_inc.csv
+Balance de clases: 63 / 126 en clase 1 (balanceado por construcción)

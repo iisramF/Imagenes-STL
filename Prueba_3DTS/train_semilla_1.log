@@ -1,0 +1,52 @@
+Vista: incisors_vestibular | normalización de canales: global | semilla de entrenamiento: 1
+
+=== Backbone: resnet50 ===
+  Fold 1/5 -> accuracy=0.885  f1=0.889  (baseline mayoritario=0.500, preds=[12, 14], loss 0.690->0.339)
+  Fold 2/5 -> accuracy=0.840  f1=0.846  (baseline mayoritario=0.520, preds=[11, 14], loss 0.736->0.334)
+  Fold 3/5 -> accuracy=0.720  f1=0.759  (baseline mayoritario=0.520, preds=[8, 17], loss 0.686->0.363)
+  Fold 4/5 -> accuracy=0.760  f1=0.727  (baseline mayoritario=0.520, preds=[16, 9], loss 0.688->0.315)
+  Fold 5/5 -> accuracy=0.720  f1=0.759  (baseline mayoritario=0.520, preds=[9, 16], loss 0.719->0.285)
+
+Matriz de confusión acumulada — resnet50 (filas: real [fino, grueso]; columnas: predicción [fino, grueso]):
+[[46 17]
+ [10 53]]
+
+=== Backbone: efficientnet_b3 ===
+  Fold 1/5 -> accuracy=0.654  f1=0.667  (baseline mayoritario=0.500, preds=[12, 14], loss 0.704->0.506)
+  Fold 2/5 -> accuracy=0.760  f1=0.727  (baseline mayoritario=0.520, preds=[15, 10], loss 0.707->0.450)
+  Fold 3/5 -> accuracy=0.680  f1=0.667  (baseline mayoritario=0.520, preds=[13, 12], loss 0.688->0.507)
+  Fold 4/5 -> accuracy=0.440  f1=0.000  (baseline mayoritario=0.520, preds=[24, 1], loss 0.771->0.507) <-- predicción casi constante
+  Fold 5/5 -> accuracy=0.640  f1=0.710  (baseline mayoritario=0.520, preds=[7, 18], loss 0.725->0.425)
+
+Matriz de confusión acumulada — efficientnet_b3 (filas: real [fino, grueso]; columnas: predicción [fino, grueso]):
+[[44 19]
+ [27 36]]
+
+=== Backbone: densenet121 ===
+  Fold 1/5 -> accuracy=0.769  f1=0.786  (baseline mayoritario=0.500, preds=[11, 15], loss 0.730->0.402)
+  Fold 2/5 -> accuracy=0.640  f1=0.710  (baseline mayoritario=0.520, preds=[6, 19], loss 0.740->0.424)
+  Fold 3/5 -> accuracy=0.600  f1=0.706  (baseline mayoritario=0.520, preds=[3, 22], loss 0.749->0.380)
+  Fold 4/5 -> accuracy=0.800  f1=0.783  (baseline mayoritario=0.520, preds=[15, 10], loss 0.711->0.489)
+  Fold 5/5 -> accuracy=0.560  f1=0.667  (baseline mayoritario=0.520, preds=[5, 20], loss 0.720->0.452)
+
+Matriz de confusión acumulada — densenet121 (filas: real [fino, grueso]; columnas: predicción [fino, grueso]):
+[[31 32]
+ [ 9 54]]
+
+=== Backbone: convnext_tiny ===
+  Fold 1/5 -> accuracy=0.692  f1=0.714  (baseline mayoritario=0.500, preds=[11, 15], loss 0.746->0.304)
+  Fold 2/5 -> accuracy=0.720  f1=0.696  (baseline mayoritario=0.520, preds=[14, 11], loss 0.796->0.321)
+  Fold 3/5 -> accuracy=0.680  f1=0.733  (baseline mayoritario=0.520, preds=[7, 18], loss 0.695->0.351)
+  Fold 4/5 -> accuracy=0.760  f1=0.769  (baseline mayoritario=0.520, preds=[12, 13], loss 0.732->0.314)
+  Fold 5/5 -> accuracy=0.640  f1=0.710  (baseline mayoritario=0.520, preds=[7, 18], loss 0.709->0.325)
+
+Matriz de confusión acumulada — convnext_tiny (filas: real [fino, grueso]; columnas: predicción [fino, grueso]):
+[[38 25]
+ [13 50]]
+
+=== Resumen comparativo (media ± desviación típica) ===
+Backbone                     Accuracy                 F1
+resnet50           0.785 ± 0.066    0.796 ± 0.061
+efficientnet_b3    0.635 ± 0.106    0.554 ± 0.278
+densenet121        0.674 ± 0.094    0.730 ± 0.047
+convnext_tiny      0.698 ± 0.040    0.724 ± 0.025
