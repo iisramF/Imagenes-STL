@@ -15,18 +15,17 @@ cuatro arquitecturas previamente entrenadas con ImageNet, conservas gran parte d
 ## Descripción de los módulos python
 
 ### Bloque principal
-
-* **train.py:** Entrenamiento y comparación de los 4 backbones con K-Fold estratificado.
+* **svm_baseline:**. Prueba aislada con Máquinas de Soporte Vectorial (SVM). Reutiliza TODO lo desarrollado hasta ahora (vista vestibular, orientación, mapas 2.5D, caché, normalización) y sustituye solo el clasificador: en lugar de ajustar una red, se extraen características de cada caso y se entrena una SVM.
 * **dataset.py:** Genera la imagen apilada de 3 canales (depth, curvature, render).
 * **backbones.py:** Arquitectura y transfer learning: 4 backbones preentrenados en ImageNet.
 
-### Resto de módulos
-* **str_to_2_5d:** Convierte un archivo STL (malla 3D de un escaneo intraoral) en tres tipos de imagen 2.5D utilizables como entrada de una CNN 2D (ResNet, EfficientNet, etc.). Esta funcionalidad está integrada en dataset.py.
-* **convert_obj_to_stl.py:** Proceso que convierte una lista de archivos OBJ en sus equivalentes STL.
-* **\Coef. Spearman:** Diagnóstico de etiquetas: ¿qué mide realmente cada candidato a etiqueta?. 
-* **\Entrada_datos:**  Archivos CSV utilizados como parámetros en la iteraciones de prueba.
 
-## Diagrama general del entrenamiento
-El siguiente diagrama representa el flujo real de tu código, desde MANIFEST.CSV hasta la comparación final de los cuatro modelos.
+
+## Diagrama general del entrenamiento - SMV
+El siguiente diagrama representa el flujo real de código, desde MANIFEST.CSV hasta la comparación final de los cuatro modelos.
+![Texto](imagenes/diagrama_SMV.png)
+
+
+
 
 <img width="619" height="1158" alt="image" src="https://github.com/user-attachments/assets/87a62b52-eee7-4d0d-91f1-43c42de4659e" />
