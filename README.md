@@ -20,12 +20,7 @@ cuatro arquitecturas previamente entrenadas con ImageNet, conservas gran parte d
 * **backbones.py:** Arquitectura y transfer learning: 4 backbones preentrenados en ImageNet.
 
 
-
 ## Diagrama general del entrenamiento - SMV
 El siguiente diagrama representa el flujo real de código, desde MANIFEST.CSV hasta la comparación final de los cuatro modelos.
-![Texto](imagenes/diagrama_SMV.png)
+<img width="1656" height="3436" alt="diagrama_SVM" src="https://github.com/user-attachments/assets/4b38b18a-3181-4633-89ef-2fd311b997e7" />
 
-
-
-
-<img width="619" height="1158" alt="image" src="https://github.com/user-attachments/assets/87a62b52-eee7-4d0d-91f1-43c42de4659e" />
